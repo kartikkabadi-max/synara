@@ -154,12 +154,13 @@ function settlePendingApprovalsAsCancelled(
 
 function staticDevinModels() {
   return [
-    { slug: "swe", name: "SWE" },
-    { slug: "opus", name: "Opus" },
-    { slug: "sonnet", name: "Sonnet" },
-    { slug: "gpt", name: "GPT" },
-    { slug: "codex", name: "Codex" },
-    { slug: "gemini", name: "Gemini" },
+    { slug: "adaptive", name: "Adaptive" },
+    { slug: "swe-1-6", name: "SWE 1.6" },
+    { slug: "swe-1-6-fast", name: "SWE 1.6 Fast" },
+    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    { slug: "claude-opus-4-8-medium", name: "Claude Opus 4.8 Medium" },
+    { slug: "gpt-5-5-medium", name: "GPT-5.5 Medium" },
+    { slug: "gemini-3-5-flash-medium", name: "Gemini 3.5 Flash Medium" },
   ];
 }
 
