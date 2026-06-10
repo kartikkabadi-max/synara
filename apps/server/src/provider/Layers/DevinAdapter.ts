@@ -48,6 +48,7 @@ import {
 import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
 import { type AcpSessionMode, parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeDevinAcpRuntime, type DevinAcpRuntimeSettings } from "../acp/DevinAcpSupport.ts";
+import { DEVIN_FALLBACK_MODELS, normalizeDevinModelSlug } from "../acp/DevinModelCatalog.ts";
 import { DevinAdapter, type DevinAdapterShape } from "../Services/DevinAdapter.ts";
 import type { ProviderThreadTurnSnapshot } from "../Services/ProviderAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -57,19 +58,6 @@ const DEVIN_RESUME_VERSION = 1 as const;
 const DEVIN_PLAN_MODE_ALIASES = ["plan"];
 const DEVIN_FULL_ACCESS_MODE_ALIASES = ["bypass", "bypass permissions"];
 const DEVIN_CODE_MODE_ALIASES = ["accept-edits", "code", "accept edits"];
-const DEVIN_ACP_MODEL_ALIASES: Readonly<Record<string, string>> = {
-  swe: "swe-1-6",
-  opus: "claude-opus-4-8-medium",
-  sonnet: "claude-sonnet-4-6",
-  gpt: "gpt-5-5-medium",
-  codex: "gpt-5-3-codex-medium",
-  gemini: "gemini-3-5-flash-medium",
-};
-
-function normalizeDevinAcpModel(model: string): string {
-  const trimmed = model.trim();
-  return DEVIN_ACP_MODEL_ALIASES[trimmed.toLowerCase()] ?? trimmed;
-}
 
 export interface DevinAcpRuntimeFactoryInput {
   readonly devinSettings: DevinAcpRuntimeSettings;
@@ -150,18 +138,6 @@ function settlePendingApprovalsAsCancelled(
     (pending) => Deferred.succeed(pending.decision, "cancel" as const),
     { discard: true },
   ).pipe(Effect.andThen(Effect.sync(() => pendingApprovals.clear())));
-}
-
-function staticDevinModels() {
-  return [
-    { slug: "adaptive", name: "Adaptive" },
-    { slug: "swe-1-6", name: "SWE 1.6" },
-    { slug: "swe-1-6-fast", name: "SWE 1.6 Fast" },
-    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    { slug: "claude-opus-4-8-medium", name: "Claude Opus 4.8 Medium" },
-    { slug: "gpt-5-5-medium", name: "GPT-5.5 Medium" },
-    { slug: "gemini-3-5-flash-medium", name: "Gemini 3.5 Flash Medium" },
-  ];
 }
 
 function normalizedModeText(value: string): string {
@@ -402,7 +378,7 @@ function makeProviderAdapter(
 
         const selectedModel =
           input.modelSelection?.provider === PROVIDER
-            ? normalizeDevinAcpModel(input.modelSelection.model)
+            ? normalizeDevinModelSlug(input.modelSelection.model)
             : "";
         yield* applyDevinModeSelection({
           runtime: acp,
@@ -592,7 +568,7 @@ function makeProviderAdapter(
         const turnId = TurnId.makeUnsafe(crypto.randomUUID());
         const turnModel =
           input.modelSelection?.provider === PROVIDER
-            ? normalizeDevinAcpModel(input.modelSelection.model)
+            ? normalizeDevinModelSlug(input.modelSelection.model)
             : "";
         const model = turnModel || ctx.session.model;
         yield* applyDevinModeSelection({
@@ -843,10 +819,22 @@ function makeProviderAdapter(
           supportsThreadImport: true,
         } satisfies ProviderComposerCapabilities),
       listModels: () =>
-        Effect.succeed({
-          models: staticDevinModels(),
-          source: "devin",
-          cached: true,
+        Effect.gen(function* () {
+          for (const ctx of sessions.values()) {
+            if (ctx.stopped) continue;
+            const configOptions = yield* ctx.acp.getConfigOptions;
+            const modelOption = configOptions.find((opt) => opt.category === "model");
+            if (!modelOption || modelOption.type !== "select") continue;
+            const models = modelOption.options.flatMap((entry) =>
+              "value" in entry
+                ? [{ slug: entry.value, name: entry.name ?? entry.value }]
+                : entry.options.map((o) => ({ slug: o.value, name: o.name ?? o.value })),
+            );
+            if (models.length > 0) {
+              return { models, source: "devin.acp", cached: false };
+            }
+          }
+          return { models: DEVIN_FALLBACK_MODELS, source: "devin.fallback", cached: true };
         }),
     };
 
