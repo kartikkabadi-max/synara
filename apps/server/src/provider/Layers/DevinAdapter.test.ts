@@ -1,8 +1,8 @@
 import { describe, it, assert } from "@effect/vitest";
-import { Effect, Stream } from "effect";
+import { Effect, Fiber, Stream } from "effect";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
 import type {
   AcpSessionRuntimeShape,
@@ -27,10 +27,22 @@ function makeMockRuntime(input?: {
   readonly modeState?: AcpSessionModeState;
   readonly onSetMode?: (modeId: string) => Effect.Effect<void>;
   readonly cancel?: Effect.Effect<void, EffectAcpErrors.AcpError>;
+  readonly onHandleElicitation?: (
+    handler: (
+      request: EffectAcpSchema.ElicitationRequest,
+    ) => Effect.Effect<EffectAcpSchema.ElicitationResponse, EffectAcpErrors.AcpError>,
+  ) => void;
 }) {
   return {
     handleRequestPermission: () => Effect.void,
-    handleElicitation: () => Effect.void,
+    handleElicitation: (
+      handler: (
+        request: EffectAcpSchema.ElicitationRequest,
+      ) => Effect.Effect<EffectAcpSchema.ElicitationResponse, EffectAcpErrors.AcpError>,
+    ) => {
+      input?.onHandleElicitation?.(handler);
+      return Effect.void;
+    },
     handleReadTextFile: () => Effect.void,
     handleWriteTextFile: () => Effect.void,
     handleCreateTerminal: () => Effect.void,
@@ -503,4 +515,68 @@ describe("DevinAdapterLive", () => {
       ),
     ),
   );
+
+  it.effect("respondToUserInput fails for unknown request id", () =>
+    Effect.gen(function* () {
+      const adapter = yield* DevinAdapter;
+      yield* adapter.startSession({
+        threadId,
+        provider: "devin",
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+
+      const error = yield* adapter
+        .respondToUserInput(threadId, ApprovalRequestId.makeUnsafe("nonexistent-request"), {
+          choice: "a",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "ProviderAdapterRequestError");
+      assert.match(error.message, /Unknown pending user-input request/);
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(
+      Effect.provide(
+        makeDevinAdapterLive({
+          makeRuntime: () => Effect.succeed(makeMockRuntime()),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("registers elicitation handler during Devin session startup", () => {
+    let handlerRegistered = false;
+
+    return Effect.gen(function* () {
+      const adapter = yield* DevinAdapter;
+      yield* adapter.startSession({
+        threadId,
+        provider: "devin",
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+
+      assert.strictEqual(
+        handlerRegistered,
+        true,
+        "elicitation handler should be registered during session start",
+      );
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(
+      Effect.provide(
+        makeDevinAdapterLive({
+          makeRuntime: () =>
+            Effect.succeed(
+              makeMockRuntime({
+                onHandleElicitation: () => {
+                  handlerRegistered = true;
+                },
+              }),
+            ),
+        }),
+      ),
+    );
+  });
 });

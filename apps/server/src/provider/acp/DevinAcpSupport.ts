@@ -90,6 +90,10 @@ export const makeDevinAcpRuntime = (
         spawn: buildDevinAcpSpawnInput(input.devinSettings, input.cwd),
         resolveAuthMethodId: resolveDevinAcpAuthMethodId,
         authenticateMeta: { headless: true },
+        clientCapabilities: {
+          ...input.clientCapabilities,
+          elicitation: { form: {} },
+        },
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

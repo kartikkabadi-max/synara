@@ -11,6 +11,7 @@ import {
   type ProviderInteractionMode,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ProviderUserInputAnswers,
   type RuntimeMode,
   RuntimeRequestId,
   type ThreadId,
@@ -48,6 +49,10 @@ import {
 import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
 import { type AcpSessionMode, parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeDevinAcpRuntime, type DevinAcpRuntimeSettings } from "../acp/DevinAcpSupport.ts";
+import {
+  elicitationFormToUserInputQuestions,
+  userInputAnswersToElicitationContent,
+} from "../acp/DevinElicitation.ts";
 import { applyDevinModeSelection } from "../acp/DevinModeMapper.ts";
 import { DEVIN_FALLBACK_MODELS, normalizeDevinModelSlug } from "../acp/DevinModelCatalog.ts";
 import { DevinAdapter, type DevinAdapterShape } from "../Services/DevinAdapter.ts";
@@ -82,6 +87,10 @@ interface PendingApproval {
   readonly kind: string;
 }
 
+interface PendingUserInput {
+  readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+}
+
 interface DevinSessionContext {
   readonly threadId: ThreadId;
   session: ProviderSession;
@@ -89,6 +98,7 @@ interface DevinSessionContext {
   readonly acp: AcpSessionRuntimeShape;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+  readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: ProviderThreadTurnSnapshot[];
   activeTurnId: TurnId | undefined;
   activePromptFiber: Fiber.Fiber<void, never> | undefined;
@@ -136,6 +146,16 @@ function settlePendingApprovalsAsCancelled(
     (pending) => Deferred.succeed(pending.decision, "cancel" as const),
     { discard: true },
   ).pipe(Effect.andThen(Effect.sync(() => pendingApprovals.clear())));
+}
+
+function settlePendingUserInputsAsEmptyAnswers(
+  pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>,
+): Effect.Effect<void> {
+  return Effect.forEach(
+    [...pendingUserInputs.values()],
+    (pending) => Deferred.succeed(pending.answers, {}),
+    { discard: true },
+  ).pipe(Effect.andThen(Effect.sync(() => pendingUserInputs.clear())));
 }
 
 function makeDefaultRuntimeFactory(input: DevinAcpRuntimeFactoryInput) {
@@ -192,6 +212,7 @@ function makeProviderAdapter(
         if (ctx.stopped) return;
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -226,6 +247,7 @@ function makeProviderAdapter(
           binaryPath: input.providerOptions?.devin?.binaryPath?.trim() || "devin",
         };
         const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+        const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
         yield* Effect.addFinalizer(() =>
@@ -307,6 +329,48 @@ function makeProviderAdapter(
               };
             }),
           );
+
+          yield* acp.handleElicitation((request) =>
+            Effect.gen(function* () {
+              if (request.mode !== "form") {
+                return { action: { action: "decline" as const } };
+              }
+              const requestId = ApprovalRequestId.makeUnsafe(crypto.randomUUID());
+              const runtimeRequestId = RuntimeRequestId.makeUnsafe(requestId);
+              const answers = yield* Deferred.make<ProviderUserInputAnswers>();
+              pendingUserInputs.set(requestId, { answers });
+              yield* publish({
+                type: "user-input.requested",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId: ctx?.activeTurnId,
+                requestId: runtimeRequestId,
+                payload: { questions: elicitationFormToUserInputQuestions(request) },
+                raw: {
+                  source: "acp.jsonrpc",
+                  method: "session/elicitation",
+                  payload: request,
+                },
+              });
+              const resolved = yield* Deferred.await(answers);
+              pendingUserInputs.delete(requestId);
+              yield* publish({
+                type: "user-input.resolved",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId: ctx?.activeTurnId,
+                requestId: runtimeRequestId,
+                payload: { answers: resolved },
+              });
+              const content = userInputAnswersToElicitationContent(request, resolved);
+              return Object.keys(content).length > 0
+                ? { action: { action: "accept" as const, content } }
+                : { action: { action: "cancel" as const } };
+            }),
+          );
+
           return yield* acp.start();
         }).pipe(
           Effect.mapError((error: EffectAcpErrors.AcpError) =>
@@ -356,6 +420,7 @@ function makeProviderAdapter(
           acp,
           notificationFiber: undefined,
           pendingApprovals,
+          pendingUserInputs,
           turns: [],
           activeTurnId: undefined,
           activePromptFiber: undefined,
@@ -668,6 +733,7 @@ function makeProviderAdapter(
         Effect.gen(function* () {
           const ctx = yield* requireSession(threadId);
           yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+          yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
           const activePromptFiber = ctx.activePromptFiber;
           yield* Effect.ignore(
             ctx.acp.cancel.pipe(
@@ -693,14 +759,19 @@ function makeProviderAdapter(
           }
           yield* Deferred.succeed(pending.decision, decision);
         }),
-      respondToUserInput: (_threadId, requestId) =>
-        Effect.fail(
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session/elicitation",
-            detail: `Unknown pending user-input request: ${requestId}`,
-          }),
-        ),
+      respondToUserInput: (threadId, requestId, answers) =>
+        Effect.gen(function* () {
+          const ctx = yield* requireSession(threadId);
+          const pending = ctx.pendingUserInputs.get(requestId);
+          if (!pending) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/elicitation",
+              detail: `Unknown pending user-input request: ${requestId}`,
+            });
+          }
+          yield* Deferred.succeed(pending.answers, answers);
+        }),
       stopSession: (threadId) =>
         Effect.gen(function* () {
           const ctx = yield* requireSession(threadId);
