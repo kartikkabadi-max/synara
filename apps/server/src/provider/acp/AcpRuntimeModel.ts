@@ -176,6 +176,21 @@ export function parseSessionModeState(
   };
 }
 
+export function parseAvailableCommands(
+  commands: ReadonlyArray<EffectAcpSchema.AvailableCommand> | null | undefined,
+): ReadonlyArray<AcpAvailableCommand> {
+  return (commands ?? [])
+    .map((command) => {
+      const name = command.name.trim();
+      if (!name) return undefined;
+      const description = command.description?.trim() || undefined;
+      return description !== undefined
+        ? ({ name, description } satisfies AcpAvailableCommand)
+        : ({ name } satisfies AcpAvailableCommand);
+    })
+    .filter((command): command is AcpAvailableCommand => command !== undefined);
+}
+
 function normalizePlanStepStatus(raw: unknown): "pending" | "inProgress" | "completed" {
   switch (raw) {
     case "completed":
@@ -637,15 +652,11 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       break;
     }
     case "available_commands_update": {
-      const commands = upd.availableCommands
-        .map((command) => {
-          const name = command.name.trim();
-          if (!name) return undefined;
-          const description = command.description?.trim() || undefined;
-          return description !== undefined ? { name, description } : { name };
-        })
-        .filter((c): c is AcpAvailableCommand => c !== undefined);
-      events.push({ _tag: "AvailableCommandsUpdated", commands, rawPayload: params });
+      events.push({
+        _tag: "AvailableCommandsUpdated",
+        commands: parseAvailableCommands(upd.availableCommands),
+        rawPayload: params,
+      });
       break;
     }
     case "tool_call": {

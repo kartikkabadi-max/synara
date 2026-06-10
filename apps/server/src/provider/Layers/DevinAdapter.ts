@@ -8,13 +8,11 @@ import {
   EventId,
   type ProviderComposerCapabilities,
   type ProviderApprovalDecision,
-  type ProviderInteractionMode,
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
-  type RuntimeMode,
   RuntimeRequestId,
-  type ThreadId,
+  ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import { Deferred, Effect, Exit, Fiber, Layer, PubSub, Scope, Stream } from "effect";
@@ -47,7 +45,7 @@ import {
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
-import { type AcpSessionMode, parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeDevinAcpRuntime, type DevinAcpRuntimeSettings } from "../acp/DevinAcpSupport.ts";
 import {
   elicitationFormToUserInputQuestions,
@@ -433,6 +431,7 @@ function makeProviderAdapter(
             Effect.gen(function* () {
               switch (event._tag) {
                 case "ModeChanged":
+                case "AvailableCommandsUpdated":
                   return;
                 case "AssistantItemStarted":
                   yield* publish(
@@ -726,6 +725,7 @@ function makeProviderAdapter(
       capabilities: {
         sessionModelSwitch: "in-session",
         supportsRuntimeModelList: true,
+        supportsNativeSlashCommandDiscovery: true,
       },
       startSession,
       sendTurn,
@@ -820,7 +820,7 @@ function makeProviderAdapter(
           provider: PROVIDER,
           supportsSkillMentions: false,
           supportsSkillDiscovery: false,
-          supportsNativeSlashCommandDiscovery: false,
+          supportsNativeSlashCommandDiscovery: true,
           supportsPluginMentions: false,
           supportsPluginDiscovery: false,
           supportsRuntimeModelList: true,
@@ -844,6 +844,24 @@ function makeProviderAdapter(
             }
           }
           return { models: DEVIN_FALLBACK_MODELS, source: "devin.fallback", cached: true };
+        }),
+      listCommands: (input) =>
+        Effect.gen(function* () {
+          const ctx = input.threadId
+            ? sessions.get(ThreadId.makeUnsafe(input.threadId))
+            : undefined;
+          if (ctx && !ctx.stopped) {
+            const commands = yield* ctx.acp.getAvailableCommands;
+            return { commands, source: "devin.acp", cached: false };
+          }
+          for (const candidate of sessions.values()) {
+            if (candidate.stopped) continue;
+            const commands = yield* candidate.acp.getAvailableCommands;
+            if (commands.length > 0) {
+              return { commands, source: "devin.acp", cached: false };
+            }
+          }
+          return { commands: [], source: "devin.acp", cached: false };
         }),
     };
 

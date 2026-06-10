@@ -525,7 +525,7 @@ describe("AcpRuntimeModel", () => {
         sessionUpdate: "available_commands_update",
         availableCommands: [
           { name: "   ", description: "no name" },
-          { name: "/revert" },
+          { name: "/revert", description: "" },
         ],
       },
     } satisfies EffectAcpSchema.SessionNotification);

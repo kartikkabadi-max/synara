@@ -471,6 +471,7 @@ describe("getProviderStartOptions", () => {
         openCodeExperimentalWebSockets: false,
         openCodeServerPassword: "",
         openCodeServerUrl: "",
+        devinBinaryPath: "devin",
         piAgentDir: "",
         piBinaryPath: "pi",
       }),

@@ -156,7 +156,6 @@ describe("applyDevinModeSelection", () => {
     Effect.gen(function* () {
       let setModeCalled = false;
       const runtime = makeMockRuntime({
-        modeState: undefined,
         onSetMode: () => {
           setModeCalled = true;
         },

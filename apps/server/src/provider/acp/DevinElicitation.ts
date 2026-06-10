@@ -80,7 +80,7 @@ function propertyOptions(
 
 export function userInputAnswersToElicitationContent(
   request: ElicitationForm,
-  answers: Record<string, string | string[] | null>,
+  answers: Record<string, string | ReadonlyArray<string> | null>,
 ): Record<string, ElicitationContentValue> {
   const schema = request.requestedSchema.properties;
   const content: Record<string, ElicitationContentValue> = {};
@@ -97,10 +97,13 @@ export function userInputAnswersToElicitationContent(
     }
 
     switch (prop.type) {
-      case "boolean":
-        content[key] = normalizeBooleanValue(value);
-        if (content[key] !== undefined) break;
+      case "boolean": {
+        const normalized = normalizeBooleanValue(value);
+        if (normalized !== undefined) {
+          content[key] = normalized;
+        }
         continue;
+      }
 
       case "number":
       case "integer": {
@@ -125,12 +128,13 @@ export function userInputAnswersToElicitationContent(
   return content;
 }
 
-function normalizeStringValue(value: string | string[]): string {
-  return Array.isArray(value) ? value.join(", ") : value;
+function normalizeStringValue(value: string | ReadonlyArray<string>): string {
+  return typeof value === "string" ? value : value.join(", ");
 }
 
-function normalizeBooleanValue(value: string | string[]): boolean | undefined {
-  const raw = Array.isArray(value) ? (value.length === 1 ? value[0] : value.join(", ")) : value;
+function normalizeBooleanValue(value: string | ReadonlyArray<string>): boolean | undefined {
+  const raw = typeof value === "string" ? value : value.length === 1 ? value[0] : value.join(", ");
+  if (raw === undefined) return undefined;
   const lowered = raw.trim().toLowerCase();
   if (lowered === "yes" || lowered === "true") return true;
   if (lowered === "no" || lowered === "false") return false;

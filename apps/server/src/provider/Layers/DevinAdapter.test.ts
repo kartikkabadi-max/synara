@@ -1,5 +1,5 @@
 import { describe, it, assert } from "@effect/vitest";
-import { Effect, Fiber, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
@@ -32,6 +32,7 @@ function makeMockRuntime(input?: {
       request: EffectAcpSchema.ElicitationRequest,
     ) => Effect.Effect<EffectAcpSchema.ElicitationResponse, EffectAcpErrors.AcpError>,
   ) => void;
+  readonly availableCommands?: ReadonlyArray<{ name: string; description?: string }>;
 }) {
   return {
     handleRequestPermission: () => Effect.void,
@@ -78,6 +79,7 @@ function makeMockRuntime(input?: {
     setConfigOption: () =>
       Effect.succeed({ configOptions: [] } as EffectAcpSchema.SetSessionConfigOptionResponse),
     setModel: (model: string) => input?.onSetModel?.(model) ?? Effect.void,
+    getAvailableCommands: Effect.succeed(input?.availableCommands ?? []),
     request: () => Effect.succeed({}),
     notify: () => Effect.void,
   } as unknown as AcpSessionRuntimeShape;
@@ -511,6 +513,78 @@ describe("DevinAdapterLive", () => {
                 configOptions: [],
               }),
             ),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("lists Devin slash commands from the live ACP session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* DevinAdapter;
+      yield* adapter.startSession({
+        threadId,
+        provider: "devin",
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter.listCommands!({
+        provider: "devin",
+        cwd: "/tmp/project",
+        threadId: String(threadId),
+      });
+
+      assert.strictEqual(result.source, "devin.acp");
+      assert.strictEqual(result.cached, false);
+      assert.deepStrictEqual(result.commands, [
+        { name: "revert", description: "Revert changes" },
+        { name: "steps" },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeDevinAdapterLive({
+          makeRuntime: () =>
+            Effect.succeed(
+              makeMockRuntime({
+                availableCommands: [
+                  { name: "revert", description: "Revert changes" },
+                  { name: "steps" },
+                ],
+              }),
+            ),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("returns empty commands when no session is live", () =>
+    Effect.gen(function* () {
+      const adapter = yield* DevinAdapter;
+
+      const result = yield* adapter.listCommands!({ provider: "devin", cwd: "/tmp/project" });
+
+      assert.deepStrictEqual(result.commands, []);
+      assert.strictEqual(result.source, "devin.acp");
+      assert.strictEqual(result.cached, false);
+    }).pipe(
+      Effect.provide(
+        makeDevinAdapterLive({
+          makeRuntime: () => Effect.succeed(makeMockRuntime()),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("composer capabilities advertise native slash-command discovery", () =>
+    Effect.gen(function* () {
+      const adapter = yield* DevinAdapter;
+      const capabilities = yield* adapter.getComposerCapabilities!();
+
+      assert.strictEqual(capabilities.supportsNativeSlashCommandDiscovery, true);
+    }).pipe(
+      Effect.provide(
+        makeDevinAdapterLive({
+          makeRuntime: () => Effect.succeed(makeMockRuntime()),
         }),
       ),
     ),
