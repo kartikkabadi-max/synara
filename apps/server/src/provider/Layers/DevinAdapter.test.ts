@@ -5,8 +5,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import {
   ApprovalRequestId,
   ThreadId,
-  type ProviderRuntimeEvent,
-  type RuntimeRequestId,
+  type ProviderRuntimeUserInputRequestedEvent,
+  type ProviderRuntimeUserInputResolvedEvent,
 } from "@t3tools/contracts";
 
 import type {
@@ -663,11 +663,8 @@ describe("DevinAdapterLive", () => {
     request: EffectAcpSchema.ElicitationRequest,
   ) => Effect.Effect<EffectAcpSchema.ElicitationResponse, EffectAcpErrors.AcpError>;
 
-  type UserInputRequestedEvent = Extract<
-    ProviderRuntimeEvent,
-    { type: "user-input.requested"; requestId: RuntimeRequestId }
-  >;
-  type UserInputResolvedEvent = Extract<ProviderRuntimeEvent, { type: "user-input.resolved" }>;
+  type UserInputRequestedEvent = ProviderRuntimeUserInputRequestedEvent;
+  type UserInputResolvedEvent = ProviderRuntimeUserInputResolvedEvent;
 
   const enumFormRequest: EffectAcpSchema.ElicitationRequest = {
     mode: "form",
