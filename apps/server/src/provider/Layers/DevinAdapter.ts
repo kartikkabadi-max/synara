@@ -26,7 +26,6 @@ import {
   Layer,
   Option,
   PubSub,
-  Schedule,
   Scope,
   Stream,
 } from "effect";
