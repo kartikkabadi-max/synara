@@ -96,22 +96,19 @@ function makeMockRuntime(input?: {
 
 describe("buildDevinAcpSpawnInput", () => {
   it("builds the default Devin ACP command", () => {
-    assert.deepStrictEqual(buildDevinAcpSpawnInput(undefined, "/tmp/project"), {
-      command: "devin",
-      args: ["acp"],
-      cwd: "/tmp/project",
-    });
+    const result = buildDevinAcpSpawnInput(undefined, "/tmp/project");
+    assert.strictEqual(result.command, "devin");
+    assert.deepStrictEqual(result.args, ["acp"]);
+    assert.strictEqual(result.cwd, "/tmp/project");
+    assert.isObject(result.env);
   });
 
   it("uses the configured Devin binary path", () => {
-    assert.deepStrictEqual(
-      buildDevinAcpSpawnInput({ binaryPath: "/Users/me/bin/devin" }, "/tmp/project"),
-      {
-        command: "/Users/me/bin/devin",
-        args: ["acp"],
-        cwd: "/tmp/project",
-      },
-    );
+    const result = buildDevinAcpSpawnInput({ binaryPath: "/Users/me/bin/devin" }, "/tmp/project");
+    assert.strictEqual(result.command, "/Users/me/bin/devin");
+    assert.deepStrictEqual(result.args, ["acp"]);
+    assert.strictEqual(result.cwd, "/tmp/project");
+    assert.isObject(result.env);
   });
 });
 
@@ -472,7 +469,8 @@ describe("DevinAdapterLive", () => {
       const result = yield* adapter.listModels!({ provider: "devin" });
 
       assert.strictEqual(result.source, "devin.acp");
-      assert.strictEqual(result.cached, false);
+      // Models are eagerly cached during startSession, so listModels hits the cache.
+      assert.strictEqual(result.cached, true);
       assert.strictEqual(result.models.length, 2);
       assert.deepStrictEqual(
         result.models.find((m) => m.slug === "swe-1-6"),

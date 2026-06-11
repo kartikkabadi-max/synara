@@ -309,7 +309,7 @@ function makeProviderAdapter(
           threadId: input.threadId,
           ...(resumeSessionId ? { resumeSessionId } : {}),
           ...(options?.nativeEventLogger ? { nativeEventLogger: options.nativeEventLogger } : {}),
-          childProcessSpawner: childProcessSpawner ?? undefined,
+          ...(childProcessSpawner ? { childProcessSpawner } : {}),
         }).pipe(Effect.provideService(Scope.Scope, sessionScope));
 
         const started = yield* Effect.gen(function* () {
@@ -619,7 +619,7 @@ function makeProviderAdapter(
             provider: PROVIDER,
             threadId: input.threadId,
             payload: {
-              state: "warning",
+              state: "ready",
               reason:
                 "Could not resume your previous Devin session. A new session was started — previous context was not carried over.",
             },
